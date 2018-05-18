@@ -1,0 +1,281 @@
+---
+title: "Final Tutorial"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+This tutorial will walk you through the entire data science pipeline: data collection/management, exploratory data analysis, hypothesis testing, machine learning, and the curation of a message derived from insights learned during the data analysis.
+
+The dataset we will be working with is provided by the National Center for Health Statistics: "Leading Causes of Death: United States". This dataset shows the death rates for the leading causes of death in the US over the years 1999-2015. Data is contained for each of the 50 states including the District of Columbia.
+
+It is important to understand the attribute "Age-adjusted Death Rate". Death rate is calculated by the formula (total deaths / total population) x 100,000. For example, let us say there were 1,000 deaths due to the flu in a state that has a popuation of 2,000,000. Our death rate would be (1,000 / 2,000,000) x 100,000 = 50. This rate of 50 means there were 50 deaths due to the flu per 100,000 people. This is the crude death rate, the dataset's is age adjusted. Age-adjustment is a way of standardizing the death rate. A death rate can be distorted by a population. Suppose one state has a large eldery population, this state might have higher death rates simply because the eldery are more likely to die. The death rates are adjusted to have rates that would exist under a normal/standard age distribution.
+
+Further reading about age-adjusted death rates: https://health.mo.gov/data/mica/CDP_MICA/AARate.html
+
+Link to the dataset:
+https://data.cdc.gov/NCHS/NCHS-Leading-Causes-of-Death-United-States/bi63-dtpu
+
+
+## Data Collection/Management
+
+#### Loading Data
+
+Our dataset was downloaded as a CSV (comma separated values) file, which is a common format for datasets. To read the file and transform it into a dataframe in R, we use the function read_csv. "deaths" now refers to our dataframe. We can see the data has 6 attributes or columns: Year, 113 Cause Name, Cause Name, State, Deaths, and Age-adjusted Death Rate.
+```{r}
+library(tidyverse)
+
+deaths <- read_csv("c:/users/Anastasiya/Documents/NCHS_-_Leading_Causes_of_Death__United_States.csv")
+
+deaths
+        
+```
+
+#### Tidying Data/Handling Missing Data
+
+Luckily, we are working with a very tidy and complete dataset. Each attribute forms a column, and each entity forms a row, although our dataset does need a few small tweaks. 
+
+Examples of untidy data:
+
+* Multiple variables stored in one column
+* Column headers are values, not variable names
+* Variables stored in both rows and column
+
+Follow this link for more information regarding data tidying: http://www.hcbravo.org/IntroDataSci/bookdown-notes/tidying-data.html
+
+There is a minor amount of missing data. A small amount of death rates are blank. Looking at the data I can see this is because the corresponding number of deaths is very small. All entities that have an empty death rate attribute have less than 20 deaths. Dividing less than 20 deaths by the population of any state will result in a very small death rate, so I think it is safe to record the death rate as 0 for these occurences.
+
+Follow this link for more information regarding handling missing data:
+http://www.hcbravo.org/IntroDataSci/bookdown-notes/eda-handling-missing-data.html
+
+Our dataset is almost ready for analysis, we just need a few tweaks: 
+
+* Some of the column titles contain spaces, which makes it difficult to access the column by name. The spaces in the column titles will be replaced with underscores using the gsub function
+* The final column's name is a bit lengthy, so it will be shortened
+* There are two columns that contain the same information: 113 Cause Name and Cause Name. 113 has some extraneous information that is not needed for our analysis, so it will be removed using the select function
+* Amoung the state columns there is a "United States" entity for each year and cause. Although it is nice to have a summary statistic, I can compute this myself and it will get in the way/skew data if it remains in the dataframe, so it will be removed
+* One of the causes are abbreviated (Chronic lower respiratory diseases as CLRD), this will be changed back to the longer form
+* It appears the dataframe is sorted by cause, but there are a few unsorted entities scattered throughout. To make it look nicer, we will sort by state using the arrange function.
+        
+
+```{r}
+
+names(deaths) <- gsub(" ","_",names(deaths))
+colnames(deaths)[6] <- "Death_Rate"
+deaths[deaths == "CLRD"] <- "Chronic lower respiratory diseases"
+deaths[is.na(deaths)] <- 0
+
+deaths<-deaths[!(deaths$State=="United States"),]
+
+deaths <- deaths %>%
+        select(Year, Cause_Name, State, Deaths, Death_Rate) %>%
+        arrange(State)
+
+deaths
+```
+
+## Exploratory Data Analysis
+
+This dataset is a goldmine for exploratory data analysis. We will be focusing on visualization.
+
+#### State Death Rates
+
+Choropleth maps are are maps where regions are shaded in relation to a data variable. This is perfect for our dataset because we have states as one of our attributes! This map will show the average death rates for all causes per state. 
+
+First, I will select the entities in our dataframe that correspond to "All Causes". I want to look at the average death rates for each state, to do this I first need to group my data by state, and then I need to take the mean of the corresponding death rate. Then I construct my map. 
+
+Because this is a state map, DC is not represented. You are able to hover over the state to get the corresponding death rate. As we can see, Mississippi has the highest death rate. This comes as no surprise to me, as Mississippi has high rates of poverty and obesity. 
+
+Follow this link for more information on why Mississippi is considered the "unhealthiest state": https://www.clarionledger.com/story/news/politics/2017/12/12/mississippi-again-unhealthiest-state-country/943720001/
+
+```{r}
+library(plotly)
+library(openintro)
+
+all_causes <- deaths %>%
+        filter(Cause_Name == "All Causes") %>%
+        group_by(State) %>%
+        summarise(Mean_Rate = mean(Death_Rate)) %>%
+        mutate(Code = state2abbr(State))
+all_causes
+
+geog <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showlakes = FALSE
+)
+
+choro <- plot_geo(all_causes, locationmode = 'USA-states') %>%
+  add_trace(
+    z = ~Mean_Rate, locations = ~Code,
+    color = ~Mean_Rate, colors = 'RdPu'
+  ) %>%
+  colorbar(title = "Death Rate per 100,000") %>%
+  layout(
+    title = 'Average Age-Adjusted Death Rates by State',
+    geo = geog
+  )
+choro
+```
+#### Leading Cause of Death
+
+I know this might be easy to figure out from prior knowledge, but let us see what our data tells us. Here we group by cause and year, and then take the mean of the amount of deaths across all states. We then plot the data using a bar graph so we can see which cause has the most average deaths associated with it. It is no surprise that "Diseases of Heart" is the leading cause of death, with cancer coming in second, and stroke coming in third.
+
+```{r}
+library(ggplot2)
+
+causes <- deaths %>%
+        filter(Cause_Name != "All Causes") %>%
+        group_by(Cause_Name, Year) %>%
+        summarize(Mean_Deaths = mean(Deaths)) %>%
+        ggplot(mapping=aes(x=Cause_Name, y=Mean_Deaths)) +
+        geom_bar(stat="identity") + theme(axis.text.x = element_text(angle = 27, hjust =1))
+causes
+                                                        
+
+```
+
+
+
+#### Are Death Rates Decreasing?
+
+As time progresses, we assume human life expectancy will increase with the help of technology and medical advances. Let us first look at the three leading causes we obtained from the previous bar graph and see if they have been decreasing over time. Here we filter the dataframe so we are only looking at the three main causes, and then we calculated the mean death rate. Faceting allows us to look at multiple graphs in one graphic, making it easier to compare and saving space.
+
+As we can see from the graphs, all three leading causes of death have been decreasing in death rate over time. That is good news!
+
+```{r}
+library(ggplot2)
+
+over_time <- deaths %>%
+        filter(Cause_Name == "Diseases of Heart" | Cause_Name == "Cancer" | Cause_Name == "Stroke") %>%
+        group_by(Cause_Name, Year) %>%
+        summarize(Mean_Rate = mean(Death_Rate))
+over_time
+
+over_time %>%
+        ggplot(aes(x=Year, y=Mean_Rate)) +
+        facet_grid(Cause_Name~.) +
+        geom_smooth()
+        
+over_time
+     
+
+```
+
+Now, let's figure out if death rate has been decreasing over time for all causes. We have a negative slope with a mostly linear relationship, meaning overall death rates have been decreasing over time.
+```{r}
+library(ggplot2)
+
+over_time <- deaths %>%
+        filter(Cause_Name == "All Causes") %>%
+        group_by(Cause_Name, Year) %>%
+        summarize(Mean_Rate = mean(Death_Rate))
+over_time
+
+over_time %>%
+        ggplot(aes(x=Year, y=Mean_Rate)) +
+        geom_smooth()
+        
+over_time
+     
+
+```
+
+### Unpredictable Trends
+
+As mentioned before, deaths related to health/medical problems are expected to decrease with technological and medical advancement. But, is there a trend for other causes of death? We will look at three seemingly unpredictable causes of death: homicide, suicide, and unintentional injuries. We will use faceting just like we did with the three leading causes of death. From the graphs we can see that homicide has not shown any significant changes, besides have a very small dip in the past few years. On the other hand, suicide has shown a slight increase, and unintentional injuries have also been increasing overall. Perhaps some of these could be explained by obtaining and analyzing further data sets.
+
+```{r}
+library(ggplot2)
+
+over_time <- deaths %>%
+        filter(Cause_Name == "Homicide" | Cause_Name == "Suicide" | Cause_Name == "Unintentional Injuries" ) %>%
+        group_by(Cause_Name, Year) %>%
+        summarize(Mean_Rate = mean(Death_Rate))
+over_time
+
+over_time %>%
+        ggplot(aes(x=Year, y=Mean_Rate)) +
+        facet_grid(Cause_Name~.) +
+        geom_smooth()
+        
+     
+```
+
+Let's see if we can learn anything about crime/homicides per state using our dataset. Once again we are creating a Choropleth map. The resulting map is not as saturated as our death rate map, this is because homicides were a fairly small statistic in this dataset. We can conclude that this is not an appropriate dataset for looking at crime/homicide statistics per state.
+```{r}
+library(plotly)
+library(openintro)
+
+all_causes <- deaths %>%
+        filter(Cause_Name == "Homicide") %>%
+        group_by(State) %>%
+        summarise(Mean_Rate = mean(Death_Rate)) %>%
+        mutate(Code = state2abbr(State))
+all_causes
+
+geog <- list(
+  scope = 'usa',
+  projection = list(type = 'albers usa'),
+  showlakes = FALSE
+)
+
+choro <- plot_geo(all_causes, locationmode = 'USA-states') %>%
+  add_trace(
+    z = ~Mean_Rate, locations = ~Code,
+    color = ~Mean_Rate, colors = 'BuPu'
+  ) %>%
+  colorbar(title = "Death Rate per 100,000") %>%
+  layout(
+    title = 'Average Age-Adjusted Death Rates by State',
+    geo = geog
+  )
+choro
+```
+
+
+
+
+
+## Hypothesis Testing & Machine Learning
+
+### Linear Model
+
+Linear regression is used to predict the value of a dependent variable using one or more independent variables. It lets us determine if there is a relationship between the variables.
+
+Hypoethesis testing is used to determine if there is enough statistical evidence to support a belief/hypothesis. There is the alternative hypothesis, which is the hypothesis we are trying to prove, and the null hypothesis, which we are trying to disprove.
+
+Follow this link to learn more about hypothesis testing: https://www.utdallas.edu/~scniu/OPRE-6301/documents/Hypothesis_Testing.pdf
+
+For our data, we are trying to show that there is a relationship between the two leading causes of death and year. So, our null hypothesis is that there is no relatioship.
+
+There are two important terms for determining rejection of the null hypothesis: alpha value and p-value. The standard alpha value is .05, which is the probability of rejecting the null hypothesis when it is true. P-values are the chance that a value falls within the normal distribution under the null hypothesis. If our p-value is less than our alpha, then there is a very small chance that the null hypothesis represents the data.
+
+Here we fit a linear regression model and use broom::tidy to gather some statistics. From this we see that we have an extremely small p-value, much less than the alpha of .05, so we can reject the null hypothesis of there being no relationship between year and leading cause of death!
+
+Next we want to examine if year and state possibly have an interaction, aka the death rates are affected by year and state. If this interaction is true, we can then get a more accurate model. However, after fitting the regression model, as we look through the state p-values, none are less than our alpha of .05, so the null hypothesis cannot be rejected, and there seems to be no interaction between state and year.
+
+
+```{r}
+
+over_time <- deaths %>%
+        filter(Cause_Name == "Diseases of Heart" | Cause_Name == "Cancer") %>%
+        group_by(Cause_Name, Year) 
+       
+plot <- over_time %>%
+        ggplot(aes(x=factor(Year), y=Death_Rate)) +
+        geom_point(aes(color=Cause_Name))
+        
+
+over_time %>%
+ggplot(aes(x = Year, y = Death_Rate, color = State)) + geom_point() + geom_smooth(method=lm)
+
+fit <- lm(data=over_time, Death_Rate~Year)
+broom::tidy(fit)
+
+lm1 <- lm(data=over_time, Death_Rate~(Year*State))
+broom::tidy(lm1)
+     
+```
